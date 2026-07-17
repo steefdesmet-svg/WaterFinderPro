@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "be.steefdesmet.waterfinderpro"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "be.steefdesmet.waterfinderpro"
         minSdk = 29
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0-alpha"
     }
@@ -49,7 +49,5 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.osmdroid:osmdroid-android:6.1.20")
 
-    implementation("com.squareup.retrofit2:retrofit:3.0.0")
-    implementation("com.squareup.retrofit2:converter-scalars:3.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
 }
