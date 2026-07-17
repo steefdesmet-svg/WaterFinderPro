@@ -39,7 +39,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationServices
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.osmdroid.config.Configuration
@@ -257,16 +259,14 @@ private fun searchWater(
     radiusMeters: Int,
     onResult: (List<WaterPlace>, String?) -> Unit
 ) {
-    kotlinx.coroutines.CoroutineScope(Dispatchers.Main).run {
-        kotlinx.coroutines.launch {
-            try {
-                val results = withContext(Dispatchers.IO) {
-                    fetchWaterPlaces(latitude, longitude, radiusMeters)
-                }
-                onResult(results, null)
-            } catch (exception: Exception) {
-                onResult(emptyList(), "Zoeken mislukt: ${exception.message ?: "onbekende fout"}")
+    CoroutineScope(Dispatchers.Main).launch {
+        try {
+            val results = withContext(Dispatchers.IO) {
+                fetchWaterPlaces(latitude, longitude, radiusMeters)
             }
+            onResult(results, null)
+        } catch (exception: Exception) {
+            onResult(emptyList(), "Zoeken mislukt: ${exception.message ?: "onbekende fout"}")
         }
     }
 }
