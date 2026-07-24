@@ -1,9 +1,12 @@
 package be.steefdesmet.waterfinderpro
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -80,9 +83,10 @@ data class WaterPlace(
 private fun WaterFinderScreen() {
     val context = LocalContext.current
     var currentLocation by remember { mutableStateOf<Location?>(null) }
-    var radiusKm by remember { mutableStateOf(25f) }
+    var radiusKm by remember { mutableStateOf(15f) }
     var isSearching by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("GPS-locatie wordt bepaald…") }
+    var selectedPlace by remember { mutableStateOf<WaterPlace?>(null) }
     val waterPlaces = remember { mutableStateListOf<WaterPlace>() }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -132,7 +136,8 @@ private fun WaterFinderScreen() {
                 OsmMap(
                     modifier = Modifier.fillMaxSize(),
                     currentLocation = currentLocation,
-                    waterPlaces = waterPlaces
+                    waterPlaces = waterPlaces,
+                    onWaterPlaceSelected = { selectedPlace = it }
                 )
                 Card(
                     modifier = Modifier
@@ -140,6 +145,28 @@ private fun WaterFinderScreen() {
                         .padding(12.dp)
                 ) {
                     Text(message, modifier = Modifier.padding(10.dp))
+                }
+            }
+
+            selectedPlace?.let { place ->
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(place.name, style = MaterialTheme.typography.titleMedium)
+                        Text("Type: ${place.type}")
+                        Button(
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = { openNavigation(context, place) }
+                        ) {
+                            Text("Breng mij erheen")
+                        }
+                    }
                 }
             }
 
@@ -153,8 +180,8 @@ private fun WaterFinderScreen() {
                 Slider(
                     value = radiusKm,
                     onValueChange = { radiusKm = it },
-                    valueRange = 5f..100f,
-                    steps = 18
+                    valueRange = 5f..25f,
+                    steps = 19
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -167,6 +194,7 @@ private fun WaterFinderScreen() {
                         onClick = {
                             val location = currentLocation ?: return@Button
                             isSearching = true
+                            selectedPlace = null
                             message = "Water zoeken…"
                             searchWater(
                                 latitude = location.latitude,
@@ -197,7 +225,8 @@ private fun WaterFinderScreen() {
 private fun OsmMap(
     modifier: Modifier,
     currentLocation: Location?,
-    waterPlaces: List<WaterPlace>
+    waterPlaces: List<WaterPlace>,
+    onWaterPlaceSelected: (WaterPlace) -> Unit
 ) {
     AndroidView(
         modifier = modifier,
@@ -225,14 +254,41 @@ private fun OsmMap(
                 Marker(map).apply {
                     position = GeoPoint(place.latitude, place.longitude)
                     title = place.name
-                    snippet = place.type
+                    snippet = "${place.type} — tik voor navigatie"
                     setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                    setOnMarkerClickListener { marker, _ ->
+                        marker.showInfoWindow()
+                        onWaterPlaceSelected(place)
+                        true
+                    }
                     map.overlays.add(this)
                 }
             }
             map.invalidate()
         }
     )
+}
+
+private fun openNavigation(context: Context, place: WaterPlace) {
+    val googleNavigation = Intent(
+        Intent.ACTION_VIEW,
+        Uri.parse("google.navigation:q=${place.latitude},${place.longitude}")
+    ).apply {
+        setPackage("com.google.android.apps.maps")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    try {
+        context.startActivity(googleNavigation)
+    } catch (_: ActivityNotFoundException) {
+        val fallback = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("geo:0,0?q=${place.latitude},${place.longitude}(${Uri.encode(place.name)})")
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(fallback)
+    }
 }
 
 private fun loadLastLocation(context: Context, onResult: (Location?) -> Unit) {
@@ -303,7 +359,7 @@ private fun fetchWaterPlaces(
         connection.doOutput = true
         connection.connectTimeout = 40_000
         connection.readTimeout = 40_000
-        connection.setRequestProperty("User-Agent", "WaterFinderPro/0.1.1")
+        connection.setRequestProperty("User-Agent", "WaterFinderPro/0.1.2")
         connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
         connection.outputStream.use { stream ->
             stream.write(postBody.toByteArray(Charsets.UTF_8))
