@@ -49,6 +49,7 @@ import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URLEncoder
 import java.net.URL
@@ -266,7 +267,13 @@ private fun searchWater(
             }
             onResult(results, null)
         } catch (exception: Exception) {
-            onResult(emptyList(), "Zoeken mislukt: ${exception.message ?: "onbekende fout"}")
+            onResult(
+                emptyList(),
+                when (exception) {
+                    is IOException -> "Zoeken mislukt. Controleer de internetverbinding en probeer opnieuw."
+                    else -> "Zoeken mislukt. Probeer het later opnieuw."
+                }
+            )
         }
     }
 }
@@ -280,46 +287,63 @@ private fun fetchWaterPlaces(
         [out:json][timeout:35];
         (
           nwr(around:$radiusMeters,$latitude,$longitude)[natural=water];
-          nwr(around:$radiusMeters,$latitude,$longitude)[waterway~\"river|canal\"];
+          nwr(around:$radiusMeters,$latitude,$longitude)[waterway~"river|canal"];
           nwr(around:$radiusMeters,$latitude,$longitude)[natural=bay];
           nwr(around:$radiusMeters,$latitude,$longitude)[place=sea];
         );
         out center tags 150;
     """.trimIndent()
 
-    val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
-    val connection = URL("https://overpass-api.de/api/interpreter?data=$encoded")
+    val postBody = "data=" + URLEncoder.encode(query, Charsets.UTF_8.name())
+    val connection = URL("https://overpass-api.de/api/interpreter")
         .openConnection() as HttpURLConnection
-    connection.connectTimeout = 40_000
-    connection.readTimeout = 40_000
-    connection.setRequestProperty("User-Agent", "WaterFinderPro/0.1")
 
-    val body = connection.inputStream.bufferedReader().use { it.readText() }
-    val elements = JSONObject(body).getJSONArray("elements")
-    val results = mutableListOf<WaterPlace>()
-
-    for (index in 0 until elements.length()) {
-        val element = elements.getJSONObject(index)
-        val tags = element.optJSONObject("tags") ?: JSONObject()
-        val center = element.optJSONObject("center")
-        val lat = if (element.has("lat")) element.optDouble("lat") else center?.optDouble("lat")
-        val lon = if (element.has("lon")) element.optDouble("lon") else center?.optDouble("lon")
-        if (lat == null || lon == null || lat.isNaN() || lon.isNaN()) continue
-
-        val type = when {
-            tags.optString("waterway").isNotBlank() -> tags.optString("waterway")
-            tags.optString("water").isNotBlank() -> tags.optString("water")
-            tags.optString("natural") == "bay" -> "baai"
-            tags.optString("place") == "sea" -> "zee"
-            else -> "water"
+    try {
+        connection.requestMethod = "POST"
+        connection.doOutput = true
+        connection.connectTimeout = 40_000
+        connection.readTimeout = 40_000
+        connection.setRequestProperty("User-Agent", "WaterFinderPro/0.1.1")
+        connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+        connection.outputStream.use { stream ->
+            stream.write(postBody.toByteArray(Charsets.UTF_8))
         }
-        results += WaterPlace(
-            id = element.optLong("id"),
-            name = tags.optString("name").ifBlank { "Naamloze waterpartij" },
-            type = type,
-            latitude = lat,
-            longitude = lon
-        )
+
+        val status = connection.responseCode
+        val responseStream = if (status in 200..299) connection.inputStream else connection.errorStream
+        val body = responseStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+        if (status !in 200..299) {
+            throw IOException("Overpass HTTP $status")
+        }
+
+        val elements = JSONObject(body).getJSONArray("elements")
+        val results = mutableListOf<WaterPlace>()
+
+        for (index in 0 until elements.length()) {
+            val element = elements.getJSONObject(index)
+            val tags = element.optJSONObject("tags") ?: JSONObject()
+            val center = element.optJSONObject("center")
+            val lat = if (element.has("lat")) element.optDouble("lat") else center?.optDouble("lat")
+            val lon = if (element.has("lon")) element.optDouble("lon") else center?.optDouble("lon")
+            if (lat == null || lon == null || lat.isNaN() || lon.isNaN()) continue
+
+            val type = when {
+                tags.optString("waterway").isNotBlank() -> tags.optString("waterway")
+                tags.optString("water").isNotBlank() -> tags.optString("water")
+                tags.optString("natural") == "bay" -> "baai"
+                tags.optString("place") == "sea" -> "zee"
+                else -> "water"
+            }
+            results += WaterPlace(
+                id = element.optLong("id"),
+                name = tags.optString("name").ifBlank { "Naamloze waterpartij" },
+                type = type,
+                latitude = lat,
+                longitude = lon
+            )
+        }
+        return results.distinctBy { it.id }
+    } finally {
+        connection.disconnect()
     }
-    return results.distinctBy { it.id }
 }
